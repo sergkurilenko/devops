@@ -80,13 +80,13 @@ jobs:
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
           pip install anywidget
 
+      # ВАЖНО: запускаем из src, чтобы ../reports => ml-pipeline-project/reports
       - name: Run Deepchecks validation
-        working-directory: ${{ github.workspace }}/ml-pipeline-project
+        working-directory: ${{ github.workspace }}/ml-pipeline-project/src
         run: |
-          mkdir -p reports
-          python src/deepchecks_validation.py
-          echo "Deepchecks reports:"
-          ls -la reports || true
+          python deepchecks_validation.py
+          echo "Reports folder:"
+          ls -la ../reports || true
 
       - name: Upload Deepchecks reports
         uses: actions/upload-artifact@v4
@@ -114,13 +114,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
+      # ВАЖНО: запускаем из src, чтобы ../reports => ml-pipeline-project/reports
       - name: Run Evidently AI monitoring
-        working-directory: ${{ github.workspace }}/ml-pipeline-project
+        working-directory: ${{ github.workspace }}/ml-pipeline-project/src
         run: |
-          mkdir -p reports
-          python src/evidently_monitoring.py
-          echo "Evidently reports:"
-          ls -la reports || true
+          python evidently_monitoring.py
+          echo "Reports folder:"
+          ls -la ../reports || true
 
       - name: Upload Evidently reports
         uses: actions/upload-artifact@v4
@@ -148,17 +148,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
+      # ВАЖНО: запускаем train из src, чтобы ../models и ../reports были внутри ml-pipeline-project
       - name: Train model with MLflow
-        working-directory: ${{ github.workspace }}/ml-pipeline-project
+        working-directory: ${{ github.workspace }}/ml-pipeline-project/src
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'file:./mlruns' }}
         run: |
-          mkdir -p reports models
-          python src/train.py --model-type rf --n-estimators 100 --max-depth 10
-          echo "Reports after training:"
-          ls -la reports || true
-          echo "Models after training:"
-          ls -la models || true
+          python train.py --model-type rf --n-estimators 100 --max-depth 10
+          echo "Models folder:"
+          ls -la ../models || true
+          echo "Reports folder:"
+          ls -la ../reports || true
 
       # S3 only
       - name: Install AWS CLI
@@ -238,6 +238,12 @@ jobs:
             ./model.tar.gz
           tar -xzf model.tar.gz
           ls -la models
+
+      - name: Deploy to production
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
+        run: |
+          echo "Deploying model to production..."
+          # ваш реальный деплой
 
       - name: Notify deployment
         run: |
