@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r "$GITHUB_WORKSPACE/requirements.txt"
+          pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
       - name: Run linting
         run: |
@@ -74,11 +74,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r "$GITHUB_WORKSPACE/requirements.txt"
+          pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
       - name: Run Deepchecks validation
         run: |
-          cd "$GITHUB_WORKSPACE/src"
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
           python deepchecks_validation.py
 
       - name: Upload Deepchecks reports
@@ -104,11 +104,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r "$GITHUB_WORKSPACE/requirements.txt"
+          pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
       - name: Run Evidently AI monitoring
         run: |
-          cd "$GITHUB_WORKSPACE/src"
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
           python evidently_monitoring.py
 
       - name: Upload Evidently reports
@@ -140,7 +140,7 @@ jobs:
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'file:./mlruns' }}
         run: |
-          cd "$GITHUB_WORKSPACE/src"
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
           python train.py --model-type rf --n-estimators 100 --max-depth 10
 
       - name: Upload model artifacts
@@ -198,7 +198,7 @@ jobs:
 
       - name: Generate summary
         run: |
-          cd "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"/ml-pipeline-project
           echo "# ML Pipeline Summary" > summary.md
           echo "" >> summary.md
           echo "## Run Information" >> summary.md
