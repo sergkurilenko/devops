@@ -75,6 +75,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
+          pip install anywidget
 
       - name: Run Deepchecks validation
         run: |
