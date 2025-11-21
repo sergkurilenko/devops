@@ -6,11 +6,9 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    # Запуск каждый день в 00:00 UTC
     - cron: '0 0 * * *'
 
 env:
-  # S3 endpoint Yandex Object Storage
   YC_S3_ENDPOINT: https://storage.yandexcloud.net
   YC_S3_REGION: ru-central1
 
@@ -32,7 +30,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('ml-pipeline-project/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -42,23 +40,23 @@ jobs:
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
       - name: Run linting
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
           pip install flake8 black isort
           flake8 src/ --max-line-length=100 --ignore=E203,W503,E226,W293,F401,F403,F841,E501,F405,F541
           black src/
           isort src/
 
       - name: Run tests
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
           pip install pytest pytest-cov
           pytest tests/ --cov=src --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
         with:
-          file: ./coverage.xml
+          file: ml-pipeline-project/coverage.xml
           flags: unittests
           name: codecov-umbrella
 
@@ -83,15 +81,19 @@ jobs:
           pip install anywidget
 
       - name: Run Deepchecks validation
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
-          python deepchecks_validation.py
+          mkdir -p reports
+          python src/deepchecks_validation.py
+          echo "Deepchecks reports:"
+          ls -la reports || true
 
       - name: Upload Deepchecks reports
         uses: actions/upload-artifact@v4
         with:
           name: deepchecks-reports
-          path: ml-pipeline-project/src/reports/deepchecks_*.html
+          path: ml-pipeline-project/reports/deepchecks_*.html
+          if-no-files-found: warn
 
   drift-monitoring:
     name: Data Drift Monitoring
@@ -113,15 +115,19 @@ jobs:
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
       - name: Run Evidently AI monitoring
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
-          python evidently_monitoring.py
+          mkdir -p reports
+          python src/evidently_monitoring.py
+          echo "Evidently reports:"
+          ls -la reports || true
 
       - name: Upload Evidently reports
         uses: actions/upload-artifact@v4
         with:
           name: evidently-reports
-          path: ml-pipeline-project/src/reports/evidently_*.html
+          path: ml-pipeline-project/reports/evidently_*.html
+          if-no-files-found: warn
 
   train-model:
     name: Train ML Model
@@ -143,13 +149,18 @@ jobs:
           pip install -r "$GITHUB_WORKSPACE/ml-pipeline-project/requirements.txt"
 
       - name: Train model with MLflow
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'file:./mlruns' }}
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
-          python train.py --model-type rf --n-estimators 100 --max-depth 10
+          mkdir -p reports models
+          python src/train.py --model-type rf --n-estimators 100 --max-depth 10
+          echo "Reports after training:"
+          ls -la reports || true
+          echo "Models after training:"
+          ls -la models || true
 
-      # ====== upload trained model ONLY to Yandex Object Storage (S3) ======
+      # S3 only
       - name: Install AWS CLI
         run: python -m pip install awscli
 
@@ -166,8 +177,6 @@ jobs:
       - name: Pack model artifacts
         working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          ls -la
-          ls -la models
           tar -czf model-${{ github.sha }}.tar.gz models
           ls -la model-${{ github.sha }}.tar.gz
 
@@ -180,17 +189,16 @@ jobs:
             model-${{ github.sha }}.tar.gz \
             s3://$YC_S3_BUCKET/models/model-${{ github.sha }}.tar.gz
 
-          # указатель на "последнюю" модель
           aws --endpoint-url=$YC_S3_ENDPOINT s3 cp \
             model-${{ github.sha }}.tar.gz \
             s3://$YC_S3_BUCKET/models/latest.tar.gz
-      # ===================================================================
 
       - name: Upload predictions (GitHub)
         uses: actions/upload-artifact@v4
         with:
           name: predictions
-          path: ml-pipeline-project/src/reports/predictions.csv
+          path: ml-pipeline-project/reports/predictions.csv
+          if-no-files-found: warn
 
   deploy:
     name: Deploy Model
@@ -231,13 +239,6 @@ jobs:
           tar -xzf model.tar.gz
           ls -la models
 
-      - name: Deploy to production
-        run: |
-          echo "Deploying model to production..."
-          # Здесь можно добавить реальный скрипт деплоя:
-          # - копирование models/ на VM / Serverless / Docker image
-          # - регистрация в MLflow Model Registry и т.д.
-
       - name: Notify deployment
         run: |
           echo "Model deployed successfully!"
@@ -257,8 +258,8 @@ jobs:
         uses: actions/download-artifact@v4
 
       - name: Generate summary
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
           echo "# ML Pipeline Summary" > summary.md
           echo "" >> summary.md
           echo "## Run Information" >> summary.md
