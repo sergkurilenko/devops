@@ -1,0 +1,23 @@
+name: california_housing_prediction
+
+conda_env: conda.yaml
+
+entry_points:
+  main:
+    parameters:
+      model_type: {type: string, default: "rf"}
+      n_estimators: {type: int, default: 100}
+      max_depth: {type: int, default: 10}
+    command: "python src/train.py --model-type {model_type} --n-estimators {n_estimators} --max-depth {max_depth}"
+  
+  validate_data:
+    command: "python src/deepchecks_validation.py"
+  
+  monitor_drift:
+    command: "python src/evidently_monitoring.py"
+  
+  full_pipeline:
+    command: |
+      python src/deepchecks_validation.py &&
+      python src/evidently_monitoring.py &&
+      python src/train.py --model-type rf --n-estimators 100 --max-depth 10

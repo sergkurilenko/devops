@@ -1,0 +1,39 @@
+# Machine Learning
+scikit-learn==1.3.2
+numpy==1.24.3
+pandas==2.0.3
+
+# MLflow
+mlflow==2.9.2
+
+# Data Validation
+deepchecks==0.17.4
+evidently==0.4.11
+
+# Cryptography (для Evidently)
+cryptography==41.0.5
+
+# Visualization
+matplotlib==3.7.3
+seaborn==0.12.2
+
+# Utilities
+joblib==1.3.2
+pyyaml==6.0.1
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Code Quality
+black==23.11.0
+flake8==6.1.0
+isort==5.12.0
+
+# Optional: DVC for data version control
+dvc==3.30.1
+
+# Optional: FastAPI для API
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
