@@ -6,8 +6,11 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    # Запуск каждый день в 00:00 UTC
     - cron: '0 0 * * *'
+
+env:
+  YC_S3_ENDPOINT: https://storage.yandexcloud.net
+  YC_S3_REGION: ru-central1
 
 jobs:
   test:
@@ -41,7 +44,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"/ml-pipeline-project
           pip install flake8 black isort
           flake8 src/ --max-line-length=100 --ignore=E203,W503,E226,W293,F401,F403,F841,E501,F405,F541
-          black src/ 
+          black src/
           isort src/
 
       - name: Run tests
@@ -144,15 +147,39 @@ jobs:
           cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
           python train.py --model-type rf --n-estimators 100 --max-depth 10
 
-      - name: Upload model artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: trained-model
-          path: |
-            models/
-            mlruns/
+      # ====== upload trained model ONLY to Yandex Object Storage ======
+      - name: Install AWS CLI
+        run: python -m pip install awscli
 
-      - name: Upload predictions
+      - name: Configure AWS CLI for Yandex Object Storage
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.YC_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.YC_S3_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+          aws configure set default.region $YC_S3_REGION
+          aws configure set endpoint_url $YC_S3_ENDPOINT
+
+      - name: Pack model artifacts
+        run: |
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
+          tar -czf model-${{ github.sha }}.tar.gz models
+
+      - name: Upload model archive to S3 (Yandex Object Storage)
+        env:
+          YC_S3_BUCKET: ${{ secrets.YC_S3_BUCKET }}
+        run: |
+          aws --endpoint-url=$YC_S3_ENDPOINT s3 cp \
+            model-${{ github.sha }}.tar.gz \
+            s3://$YC_S3_BUCKET/models/model-${{ github.sha }}.tar.gz
+
+          # указатель на "последнюю" модель
+          aws --endpoint-url=$YC_S3_ENDPOINT s3 cp \
+            model-${{ github.sha }}.tar.gz \
+            s3://$YC_S3_BUCKET/models/latest.tar.gz
+
+      - name: Upload predictions (GitHub)
         uses: actions/upload-artifact@v4
         with:
           name: predictions
@@ -168,16 +195,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Download model artifacts
-        uses: actions/download-artifact@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          name: trained-model
+          python-version: '3.9'
+
+      - name: Install AWS CLI
+        run: python -m pip install awscli
+
+      - name: Configure AWS CLI for Yandex Object Storage
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.YC_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.YC_S3_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+          aws configure set default.region $YC_S3_REGION
+          aws configure set endpoint_url $YC_S3_ENDPOINT
+
+      - name: Download model archive from S3 and unpack
+        env:
+          YC_S3_BUCKET: ${{ secrets.YC_S3_BUCKET }}
+        run: |
+          aws --endpoint-url=$YC_S3_ENDPOINT s3 cp \
+            s3://$YC_S3_BUCKET/models/model-${{ github.sha }}.tar.gz \
+            ./model.tar.gz
+          tar -xzf model.tar.gz
+          ls -la models
 
       - name: Deploy to production
         run: |
           echo "Deploying model to production..."
-          # Здесь можно добавить скрипт для деплоя
-          # Например, загрузка модели в S3, регистрация в MLflow Model Registry и т.д.
+          # ваш реальный деплой:
+          # - копирование models/ на VM / Serverless / Docker image
+          # - регистрация в MLflow Model Registry и т.д.
 
       - name: Notify deployment
         run: |
@@ -210,8 +261,8 @@ jobs:
           echo "## Artifacts Generated" >> summary.md
           echo "- Deepchecks reports" >> summary.md
           echo "- Evidently AI reports" >> summary.md
-          echo "- Trained model" >> summary.md
           echo "- Predictions" >> summary.md
+          echo "- Trained model stored in S3: models/model-${{ github.sha }}.tar.gz" >> summary.md
 
       - name: Upload summary
         uses: actions/upload-artifact@v4
