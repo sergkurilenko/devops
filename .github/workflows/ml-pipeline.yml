@@ -82,7 +82,7 @@ jobs:
           python deepchecks_validation.py
 
       - name: Upload Deepchecks reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deepchecks-reports
           path: reports/deepchecks_*.html
@@ -112,7 +112,7 @@ jobs:
           python evidently_monitoring.py
 
       - name: Upload Evidently reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: evidently-reports
           path: reports/evidently_*.html
@@ -144,7 +144,7 @@ jobs:
           python train.py --model-type rf --n-estimators 100 --max-depth 10
 
       - name: Upload model artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: trained-model
           path: |
@@ -152,7 +152,7 @@ jobs:
             mlruns/
 
       - name: Upload predictions
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: predictions
           path: reports/predictions.csv
@@ -168,7 +168,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Download model artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: trained-model
 
@@ -194,7 +194,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
 
       - name: Generate summary
         run: |
