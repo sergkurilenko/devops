@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
+    # Запуск каждый день в 00:00 UTC
     - cron: '0 0 * * *'
 
 env:
+  # S3 endpoint Yandex Object Storage
   YC_S3_ENDPOINT: https://storage.yandexcloud.net
   YC_S3_REGION: ru-central1
 
@@ -41,7 +43,7 @@ jobs:
 
       - name: Run linting
         run: |
-          cd "$GITHUB_WORKSPACE"/ml-pipeline-project
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
           pip install flake8 black isort
           flake8 src/ --max-line-length=100 --ignore=E203,W503,E226,W293,F401,F403,F841,E501,F405,F541
           black src/
@@ -49,7 +51,7 @@ jobs:
 
       - name: Run tests
         run: |
-          cd "$GITHUB_WORKSPACE"/ml-pipeline-project
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
           pip install pytest pytest-cov
           pytest tests/ --cov=src --cov-report=xml --cov-report=html
 
@@ -89,7 +91,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deepchecks-reports
-          path: reports/deepchecks_*.html
+          path: ml-pipeline-project/src/reports/deepchecks_*.html
 
   drift-monitoring:
     name: Data Drift Monitoring
@@ -119,7 +121,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: evidently-reports
-          path: reports/evidently_*.html
+          path: ml-pipeline-project/src/reports/evidently_*.html
 
   train-model:
     name: Train ML Model
@@ -147,7 +149,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/ml-pipeline-project/src"
           python train.py --model-type rf --n-estimators 100 --max-depth 10
 
-      # ====== upload trained model ONLY to Yandex Object Storage ======
+      # ====== upload trained model ONLY to Yandex Object Storage (S3) ======
       - name: Install AWS CLI
         run: python -m pip install awscli
 
@@ -162,11 +164,15 @@ jobs:
           aws configure set endpoint_url $YC_S3_ENDPOINT
 
       - name: Pack model artifacts
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         run: |
-          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
+          ls -la
+          ls -la models
           tar -czf model-${{ github.sha }}.tar.gz models
+          ls -la model-${{ github.sha }}.tar.gz
 
       - name: Upload model archive to S3 (Yandex Object Storage)
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         env:
           YC_S3_BUCKET: ${{ secrets.YC_S3_BUCKET }}
         run: |
@@ -178,12 +184,13 @@ jobs:
           aws --endpoint-url=$YC_S3_ENDPOINT s3 cp \
             model-${{ github.sha }}.tar.gz \
             s3://$YC_S3_BUCKET/models/latest.tar.gz
+      # ===================================================================
 
       - name: Upload predictions (GitHub)
         uses: actions/upload-artifact@v4
         with:
           name: predictions
-          path: reports/predictions.csv
+          path: ml-pipeline-project/src/reports/predictions.csv
 
   deploy:
     name: Deploy Model
@@ -214,6 +221,7 @@ jobs:
           aws configure set endpoint_url $YC_S3_ENDPOINT
 
       - name: Download model archive from S3 and unpack
+        working-directory: ${{ github.workspace }}/ml-pipeline-project
         env:
           YC_S3_BUCKET: ${{ secrets.YC_S3_BUCKET }}
         run: |
@@ -226,7 +234,7 @@ jobs:
       - name: Deploy to production
         run: |
           echo "Deploying model to production..."
-          # ваш реальный деплой:
+          # Здесь можно добавить реальный скрипт деплоя:
           # - копирование models/ на VM / Serverless / Docker image
           # - регистрация в MLflow Model Registry и т.д.
 
@@ -250,7 +258,7 @@ jobs:
 
       - name: Generate summary
         run: |
-          cd "$GITHUB_WORKSPACE"/ml-pipeline-project
+          cd "$GITHUB_WORKSPACE/ml-pipeline-project"
           echo "# ML Pipeline Summary" > summary.md
           echo "" >> summary.md
           echo "## Run Information" >> summary.md
@@ -268,4 +276,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-summary
-          path: summary.md
+          path: ml-pipeline-project/summary.md
