@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # MLflow UI Server
+  mlflow-ui:
+    image: ml-pipeline:latest
+    container_name: mlflow-ui
+    ports:
+      - "80:5000"
+    volumes:
+      - ./mlruns:/app/mlruns
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./data:/app/data
+    command: mlflow ui --host 0.0.0.0 --port 5000
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  # Training Service (manual)
+  train:
+    image: ml-pipeline:latest
+    container_name: ml-train
+    volumes:
+      - ./mlruns:/app/mlruns
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./data:/app/data
+    profiles:
+      - train
+    command: python src/train.py --model-type rf --n-estimators 100 --max-depth 10
+    networks:
+      - ml-network
+
+  # Deepchecks Validation (manual)
+  deepchecks:
+    image: ml-pipeline:latest
+    container_name: ml-deepchecks
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data
+    profiles:
+      - validation
+    command: python src/deepchecks_validation.py
+    networks:
+      - ml-network
+
+  # Evidently Monitoring (manual)
+  evidently:
+    image: ml-pipeline:latest
+    container_name: ml-evidently
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data
+    profiles:
+      - monitoring
+    command: python src/evidently_monitoring.py
+    networks:
+      - ml-network
+
+networks:
+  ml-network:
+    driver: bridge
