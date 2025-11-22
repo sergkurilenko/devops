@@ -1,0 +1,241 @@
+image: python:3.9
+
+stages:
+  - test
+  - validate
+  - train
+  - deploy
+  - report
+
+variables:
+  PROJECT_DIR: "$CI_PROJECT_DIR/ml-pipeline-project"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+  # Yandex Object Storage (S3-compatible)
+  YC_S3_ENDPOINT: "https://storage.yandexcloud.net"
+  YC_S3_REGION: "ru-central1"
+
+cache:
+  paths:
+    - .cache/pip
+
+# Глобальный before_script только для python-джоб
+before_script:
+  - python --version
+  - pip install --upgrade pip
+  - pip install -r "$PROJECT_DIR/requirements.txt"
+
+# -----------------------
+# TEST STAGE (lint + unit)
+# -----------------------
+test:lint:
+  stage: test
+  script:
+    - cd "$PROJECT_DIR"
+    - pip install flake8 black isort
+    - echo "Running linting..."
+    - flake8 src/ --max-line-length=100 --ignore=E203,W503,E226,W293,F401,F403,F841,E501,F405,F541
+    - black src/
+    - isort src/
+
+test:unit:
+  stage: test
+  script:
+    - cd "$PROJECT_DIR"
+    - pip install pytest pytest-cov
+    - echo "Running unit tests..."
+    - pytest tests/ --cov=src --cov-report=xml --cov-report=html
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: ml-pipeline-project/coverage.xml
+    paths:
+      - ml-pipeline-project/htmlcov/
+    expire_in: 1 week
+
+# -----------------------
+# VALIDATE STAGE
+# deepchecks + evidently
+# ВАЖНО: запускаем из src, чтобы ../reports => ml-pipeline-project/reports
+# -----------------------
+validate:deepchecks:
+  stage: validate
+  needs: ["test:lint", "test:unit"]
+  script:
+    - echo "Running Deepchecks validation..."
+    - pip install anywidget
+    - cd "$PROJECT_DIR/src"
+    - python deepchecks_validation.py
+    - echo "Reports:"
+    - ls -la ../reports || true
+  artifacts:
+    paths:
+      - ml-pipeline-project/reports/deepchecks_*.html
+    expire_in: 1 week
+
+validate:evidently:
+  stage: validate
+  needs: ["test:lint", "test:unit"]
+  script:
+    - echo "Running Evidently AI monitoring..."
+    - cd "$PROJECT_DIR/src"
+    - python evidently_monitoring.py
+    - echo "Reports:"
+    - ls -la ../reports || true
+  artifacts:
+    paths:
+      - ml-pipeline-project/reports/evidently_*.html
+      - ml-pipeline-project/reports/distribution_comparison.csv
+    expire_in: 1 week
+
+# -----------------------
+# TRAIN STAGE
+# train + upload model ONLY to S3
+# Модель НЕ кладем в artifacts GitLab
+# -----------------------
+train:model:
+  stage: train
+  needs: ["validate:deepchecks", "validate:evidently"]
+  script:
+    - |
+      set -e
+
+      echo "Training Random Forest model..."
+      cd "$PROJECT_DIR/src"
+      python train.py --model-type rf --n-estimators 100 --max-depth 10
+
+      echo "Packing model artifacts..."
+      cd "$PROJECT_DIR"
+      tar -czf model-$CI_COMMIT_SHA.tar.gz models
+      ls -la model-$CI_COMMIT_SHA.tar.gz
+
+      # ставим awscli (v1) через pip; warning про urllib3 допускается
+      pip install awscli
+
+      # На main/develop секреты обязаны быть, иначе падаем — чтобы не было 404 на deploy
+      if [ "$CI_COMMIT_BRANCH" = "main" ] || [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        if [ -z "$YC_S3_ACCESS_KEY_ID" ] || [ -z "$YC_S3_SECRET_ACCESS_KEY" ] || [ -z "$YC_S3_BUCKET" ]; then
+          echo "ERROR: S3 secrets are not set for $CI_COMMIT_BRANCH. Failing pipeline."
+          exit 1
+        fi
+      fi
+
+      echo "Uploading model to Yandex Object Storage..."
+      aws configure set aws_access_key_id "$YC_S3_ACCESS_KEY_ID"
+      aws configure set aws_secret_access_key "$YC_S3_SECRET_ACCESS_KEY"
+      aws configure set default.region "$YC_S3_REGION"
+      aws configure set endpoint_url "$YC_S3_ENDPOINT"
+
+      aws --endpoint-url="$YC_S3_ENDPOINT" s3 cp \
+        "model-$CI_COMMIT_SHA.tar.gz" \
+        "s3://$YC_S3_BUCKET/models/model-$CI_COMMIT_SHA.tar.gz"
+
+      # указатель на последнюю модель
+      aws --endpoint-url="$YC_S3_ENDPOINT" s3 cp \
+        "model-$CI_COMMIT_SHA.tar.gz" \
+        "s3://$YC_S3_BUCKET/models/latest.tar.gz"
+
+      echo "Uploaded objects:"
+      aws --endpoint-url="$YC_S3_ENDPOINT" s3 ls "s3://$YC_S3_BUCKET/models/"
+  artifacts:
+    # модель НЕ сохраняем, только predictions
+    paths:
+      - ml-pipeline-project/reports/predictions.csv
+    expire_in: 1 week
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop")'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+
+# -----------------------
+# DEPLOY STAGE
+# download model from S3 + deploy
+# Берем модель по SHA, если нет — fallback на latest.tar.gz
+# Используем python-образ (tar есть), и свой before_script без requirements.txt
+# -----------------------
+deploy:production:
+  stage: deploy
+  needs: ["train:model"]
+  image: python:3.9
+  before_script:
+    - python --version
+    - python -m pip install --upgrade pip
+    - pip install awscli
+  script:
+    - |
+      set -e
+
+      echo "Downloading model from S3..."
+
+      aws configure set aws_access_key_id "$YC_S3_ACCESS_KEY_ID"
+      aws configure set aws_secret_access_key "$YC_S3_SECRET_ACCESS_KEY"
+      aws configure set default.region "$YC_S3_REGION"
+      aws configure set endpoint_url "$YC_S3_ENDPOINT"
+
+      cd "$PROJECT_DIR"
+
+      KEY="models/model-$CI_COMMIT_SHA.tar.gz"
+      if ! aws --endpoint-url="$YC_S3_ENDPOINT" s3 ls "s3://$YC_S3_BUCKET/$KEY" >/dev/null 2>&1; then
+        echo "Key for commit not found: $KEY"
+        echo "Falling back to models/latest.tar.gz"
+        KEY="models/latest.tar.gz"
+      fi
+
+      aws --endpoint-url="$YC_S3_ENDPOINT" s3 cp \
+        "s3://$YC_S3_BUCKET/$KEY" \
+        "./model.tar.gz"
+
+      tar -xzf model.tar.gz
+      ls -la models
+
+      echo "Deploying model to production..."
+      # ваш реальный деплой:
+      # - копирование models/ на VM / Serverless / Docker image
+      # - регистрация в MLflow Model Registry и т.д.
+
+      echo "Model deployed successfully!"
+      echo "Timestamp: $(date)"
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "schedule")'
+
+# -----------------------
+# REPORT STAGE
+# summary + keep reports
+# -----------------------
+report:summary:
+  stage: report
+  needs: ["validate:deepchecks", "validate:evidently", "train:model"]
+  when: always
+  script:
+    - |
+      set -e
+
+      cd "$PROJECT_DIR"
+      echo "# ML Pipeline Summary" > summary.md
+      echo "" >> summary.md
+      echo "## Run Information" >> summary.md
+      echo "- Date: $(date)" >> summary.md
+      echo "- Commit: $CI_COMMIT_SHA" >> summary.md
+      echo "- Branch: $CI_COMMIT_BRANCH" >> summary.md
+      echo "- Pipeline: $CI_PIPELINE_ID" >> summary.md
+      echo "" >> summary.md
+      echo "## Artifacts Generated" >> summary.md
+      echo "- Deepchecks reports" >> summary.md
+      echo "- Evidently AI reports" >> summary.md
+      echo "- Predictions" >> summary.md
+      echo "- Trained model stored in S3: models/model-$CI_COMMIT_SHA.tar.gz (or latest.tar.gz)" >> summary.md
+      cat summary.md
+  artifacts:
+    paths:
+      - ml-pipeline-project/summary.md
+      - ml-pipeline-project/reports/deepchecks_*.html
+      - ml-pipeline-project/reports/evidently_*.html
+      - ml-pipeline-project/reports/distribution_comparison.csv
+      - ml-pipeline-project/reports/predictions.csv
+      - ml-pipeline-project/htmlcov/
+    expire_in: 1 week
+
