@@ -29,9 +29,3 @@ bash scripts/run_pipeline.sh
 mlflow ui
 # Откройте: http://localhost:5000
 ```
-
-MIT License
-
-## 🤝 Вклад
-
-Pull requests приветствуются! Для серьезных изменений сначала откройте issue.
