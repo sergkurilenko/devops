@@ -30,24 +30,33 @@ mlflow ui
 # Откройте: http://localhost:5000
 ```
 
-## Сборка Docker образа
+## Запустить только MLflow UI
 ```bash
-docker build -t ml-pipeline:latest .
-```
-
-## Валидация данных:
-```bash
-docker run ml-pipeline:latest python src/deepchecks_validation.py
-```
-
-## Обучение модели:
-```bash
-docker run ml-pipeline:latest python src/train.py
-```
-
-MLflow UI:
-```bash
-docker run -p 80:5000 ml-pipeline:latest
+sudo docker compose up -d mlflow-ui
 ```
 Откройте: http://localhost:80
 
+## Обучить модель
+```bash
+sudo docker compose run --rm train
+```
+
+## Запустить валидацию
+```bash
+sudo docker compose --profile validation run --rm deepchecks
+```
+
+## Запустить мониторинг
+```bash
+sudo docker compose --profile monitoring run --rm evidently
+```
+
+## Просмотр логов MLflow UI
+```bash
+sudo docker-compose logs -f mlflow-ui
+```
+
+## Остановить все
+```bash
+sudo docker-compose down
+```
