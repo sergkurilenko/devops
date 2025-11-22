@@ -29,3 +29,25 @@ bash scripts/run_pipeline.sh
 mlflow ui
 # Откройте: http://localhost:5000
 ```
+
+## Сборка Docker образа
+```bash
+docker build -t ml-pipeline:latest .
+```
+
+## Валидация данных:
+```bash
+docker run ml-pipeline:latest python src/deepchecks_validation.py
+```
+
+## Обучение модели:
+```bash
+docker run ml-pipeline:latest python src/train.py
+```
+
+MLflow UI:
+```bash
+docker run -p 80:5000 ml-pipeline:latest
+```
+Откройте: http://localhost:80
+
